@@ -11,6 +11,7 @@ module.exports = `<html lang="en">
   <link rel="stylesheet" type="text/css" href="https://cdn.auth0.com/styleguide/4.6.13/index.css">
   <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.7.0/styles/github.min.css">
   <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.7.0/highlight.min.js"></script>
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/1.13/auth0-spa-js.production.js"></script>
   <style type="text/css">
     p.controls-info {
       font-size: 13px;
@@ -43,11 +44,6 @@ module.exports = `<html lang="en">
       color: #EB5424;
     }
   </style>
-  <script type="text/javascript">
-    if (!sessionStorage.getItem("token")) {
-      window.location.href = '{{baseUrl}}/login';
-    }
-  </script>
 </head>
 <body>
 <div id="app">
@@ -440,10 +436,11 @@ module.exports = `<html lang="en">
 <script>hljs.initHighlightingOnLoad();</script>
 <script type="text/javascript">
 var clients = [];
+const callbackUrl = '{{baseUrl}}';
 
 function read() {
   $('#audience').val(localStorage.getItem('auth_debugger_audience'));
-  $('#callback_url').val(window.location.protocol + "//" + window.location.hostname + (window.location.port ? ':' + window.location.port : '') + window.location.pathname);
+  $('#callback_url').val(callbackUrl);
   $('#client').val(localStorage.getItem('auth_debugger_client'));
   //$('#client_id').val(localStorage.getItem('auth_debugger_client_id') || 'IsTxQ7jAYAXL5r5HM4L1RMzsSG0UHeOy');
   //$('#client_secret').val(localStorage.getItem('auth_debugger_client_secret'));
@@ -604,44 +601,67 @@ function executeCodeExchange(title, opt) {
 if (!window.location.origin) {
   window.location.origin = window.location.protocol + "//" + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
 }
-var callbackUrl = window.location.origin + window.location.pathname;
-$(function () {
-  function fetchAllClients(page, results) {
+
+$(function () { (async () => {
+  let auth0;
+  const onRTACallback = window.location.pathname === '/callback';
+
+  auth0 = await createAuth0Client({
+    domain: '{{rta}}',
+    client_id: '{{baseUrl}}',
+    audience: 'https://{{domain}}/api/v2/',
+    scope: 'read:clients read:client_keys',
+    redirect_uri: '{{baseUrl}}/callback',
+    useRefreshTokens: true,
+    cacheLocation: 'localstorage'
+  });
+
+  const isAuth = await auth0.isAuthenticated();
+
+  if (!isAuth) {
+    if (onRTACallback) {
+      const redirectResult = await auth0.handleRedirectCallback(window.location.href);
+    } else {
+      return auth0.loginWithRedirect();
+    }
+  }
+
+  async function fetchAllClients(page, results) {
+    const token = await auth0.getTokenSilently();
     page = page || 0;
     results = results || [];
 
     var perPage = 100;
-    $.ajax({
-      url: 'https://{{domain}}/api/v2/clients?page=' + page + '&per_page=' + perPage,
-      type: 'GET',
-      headers: {
-        'Authorization': 'Bearer ' + sessionStorage.getItem("token")
-      }}).done(
-        function(data) {
-          results = results.concat(data || []);
-          if (data && data.length === perPage) {
-            fetchAllClients(page + 1, results);
-          } else {
-            clients = _.map(results, function(client) { return _.pick(client, ['client_id', 'client_secret', 'name'] )} );
-            bindClients();
-            read();
-            setSelectedClientSecrets();
-          }
-      }).fail(function(err) {
-        if (err.status === 401 || err.status === 403) {
-          sessionStorage.removeItem('token');
-          sessionStorage.removeItem('apiToken');
-          window.location.href = '/login';
-        }
-      });
-  }
-  fetchAllClients();
 
-  if ("{{method}}" === 'POST' || (window.location.hash && window.location.hash.length > 1) || (window.location.search && window.location.search.length > 1 && window.location.search !== '?webtask_no_cache=1')) {
+    try {
+      const data = await $.ajax({
+        url: 'https://{{domain}}/api/v2/clients?page=' + page + '&per_page=' + perPage,
+        type: 'GET',
+        headers: {
+          'Authorization': 'Bearer ' + token
+        }});
+
+      results = results.concat(data || []);
+      if (data && data.length === perPage) {
+        await fetchAllClients(page + 1, results);
+      } else {
+        clients = _.map(results, function(client) { return _.pick(client, ['client_id', 'client_secret', 'name'] )} );
+        bindClients();
+        read();
+        setSelectedClientSecrets();
+      }
+    } catch (err) {
+      $('#modal-body').html('<p>Error retreiving clients.</p>');
+      $('<pre/>', { 'class': 'json-object', 'html': err.responseText || err.name || err.text || err.body || err.status }).appendTo('#modal-body');
+    };
+  }
+  await fetchAllClients();
+
+  if ("{{method}}" === 'POST' || (window.location.hash && window.location.hash.length > 1) || (!onRTACallback && window.location.search && window.location.search.length > 1 && window.location.search !== '?webtask_no_cache=1')) {
     $('#tabs a[href="#request"]').tab('show');
   }
   if (window.location.hash && window.location.hash.length > 1) {
-    $('#hash_fragment').load(window.location.origin + window.location.pathname + '/hash?' + window.location.hash.replace(/^\#/,""));
+    $('#hash_fragment').load(callbackUrl + '/hash?' + window.location.hash.replace(/^\#/,""));
   }
   $('#client').change(function(e) {
     setSelectedClientSecrets();
@@ -863,7 +883,7 @@ $(function () {
         });
     });
   });
-});
+})(); });
 </script>
 </body>
 </html>

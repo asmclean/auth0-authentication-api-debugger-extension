@@ -3,12 +3,10 @@ const crypto = require('crypto');
 const Express = require('express');
 const bodyParser = require('body-parser');
 const handlebars = require('handlebars');
-const { urlHelpers } = require('auth0-extension-express-tools');
 
 const config = require('./lib/config');
 const utils = require('./lib/utils');
 const metadata = require('../webtask.json');
-const dashboardAdmins = require('./middleware/dashboardAdmins');
 const AuthenticationClient = require('auth0').AuthenticationClient;
 
 module.exports = (configProvider) => {
@@ -22,7 +20,14 @@ module.exports = (configProvider) => {
     app.use(bodyParser.json());
     app.use(bodyParser.urlencoded({ extended: false }));
 
-    app.use(dashboardAdmins(config('AUTH0_DOMAIN'), 'Authentication API Debugger Extension', config('AUTH0_RTA')));
+    app.get('/.well-known/oauth2-client-configuration', function (req, res) {
+      res.header("Content-Type", 'application/json');
+      res.status(200).send({
+        redirect_uris: [config('PUBLIC_WT_URL') + '/callback'],
+        client_name: 'Authentication API Debugger Extension',
+        post_logout_redirect_uris: [config('PUBLIC_WT_URL')]
+      });
+    });
 
     app.get('/pkce', function (req, res) {
         const verifier = utils.base64url(crypto.randomBytes(32));
@@ -101,8 +106,9 @@ module.exports = (configProvider) => {
 
         res.send(index({
             method: req.method,
+            rta: config('AUTH0_RTA'),
             domain: config('AUTH0_DOMAIN'),
-            baseUrl: urlHelpers.getBaseUrl(req).replace('http://', 'https://'),
+            baseUrl: config('PUBLIC_WT_URL'),
             headers: utils.syntaxHighlight(req.headers),
             body: utils.syntaxHighlight(req.body),
             query: utils.syntaxHighlight(req.query),
